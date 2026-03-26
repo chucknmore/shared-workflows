@@ -87,8 +87,7 @@ jobs:
 
             if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
               FAILED_SERVICES="${FAILED_SERVICES:+${FAILED_SERVICES}, }${SVC_NAME}"
-              FAILED_DEPLOYMENT_IDS="${FAILED_DEPLOYMENT_IDS}${DEP_ID}:${SVC_NAME}
-"
+              FAILED_DEPLOYMENT_IDS=$(printf '%s%s:%s\n' "$FAILED_DEPLOYMENT_IDS" "$DEP_ID" "$SVC_NAME")
             fi
           done <<< "$SERVICES"
 
