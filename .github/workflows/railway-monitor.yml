@@ -12,6 +12,11 @@ on:
         required: false
         type: number
         default: 300
+      health_check_interval_minutes:
+        description: "Minimum minutes between health checks (0 = run every time)"
+        required: false
+        type: number
+        default: 15
     secrets:
       RAILWAY_API_TOKEN:
         required: true
@@ -40,6 +45,7 @@ jobs:
     permissions:
       issues: write
       contents: read
+      metadata: read
 
     steps:
       - name: Wait for Railway to build
@@ -254,10 +260,25 @@ jobs:
     permissions:
       issues: write
       contents: read
+      metadata: read
 
     steps:
+      - name: Check if health check should run
+        id: gate
+        run: |
+          INTERVAL=${{ inputs.health_check_interval_minutes }}
+          MINUTE=$(date -u +%-M)
+          if [ "$INTERVAL" -eq 0 ] || [ $((MINUTE % INTERVAL)) -eq 0 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Health check running (interval: every ${INTERVAL}m)"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping health check (next run at minute divisible by ${INTERVAL})"
+          fi
+
       - name: Check API health
         id: api-health
+        if: steps.gate.outputs.should_run == 'true'
         run: |
           STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
             --max-time 15 \
@@ -274,6 +295,7 @@ jobs:
 
       - name: Check frontend health
         id: frontend-health
+        if: steps.gate.outputs.should_run == 'true'
         run: |
           STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
             --max-time 15 \
