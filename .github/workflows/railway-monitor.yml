@@ -1,0 +1,449 @@
+name: Railway Monitor (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      event_name:
+        description: "The triggering event name (deployment_status or schedule)"
+        required: true
+        type: string
+      deployment_status_state:
+        description: "The deployment status state (success, failure, error)"
+        required: false
+        type: string
+        default: ""
+      deployment_environment:
+        description: "The deployment environment name (service name from Railway)"
+        required: false
+        type: string
+        default: ""
+      deployment_sha:
+        description: "The commit SHA that triggered the deployment"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      RAILWAY_API_TOKEN:
+        required: true
+      RAILWAY_PROJECT_ID:
+        required: true
+      RAILWAY_ENVIRONMENT_ID:
+        required: true
+      API_URL:
+        required: true
+      FRONTEND_URL:
+        required: true
+
+env:
+  RAILWAY_API_URL: https://backboard.railway.com/graphql/v2
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 1 — Deploy Failure Handler
+  # ─────────────────────────────────────────────────────────────
+  deploy-failure:
+    name: Handle Deploy Failure
+    if: inputs.event_name == 'deployment_status' && inputs.deployment_status_state == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Extract service name
+        id: service
+        run: |
+          SERVICE_NAME="${{ inputs.deployment_environment }}"
+          echo "name=${SERVICE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Detected failed service: ${SERVICE_NAME}"
+
+      - name: Find matching Railway service ID
+        id: railway-service
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+        run: |
+          SERVICE_NAME="${{ steps.service.outputs.name }}"
+
+          QUERY=$(jq -n \
+            --arg pid "$RAILWAY_PROJECT_ID" \
+            '{query: "query { project(id: \"\($pid)\") { services { edges { node { id name } } } } }"}')
+
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$QUERY" \
+            "$RAILWAY_API_URL" || echo '{}')
+
+          SERVICE_ID=$(echo "$RESPONSE" | jq -r \
+            --arg name "$SERVICE_NAME" \
+            '.data.project.services.edges[]
+             | select(.node.name == $name or (.node.name | ascii_downcase) == ($name | ascii_downcase))
+             | .node.id' | head -1)
+
+          if [ -z "$SERVICE_ID" ] || [ "$SERVICE_ID" = "null" ]; then
+            echo "::warning::Could not match Railway service '${SERVICE_NAME}'"
+            SERVICE_ID=""
+          fi
+
+          echo "service_id=${SERVICE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch latest failed deployment
+        id: deployment
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+        run: |
+          SERVICE_ID="${{ steps.railway-service.outputs.service_id }}"
+
+          if [ -n "$SERVICE_ID" ]; then
+            QUERY=$(jq -n \
+              --arg pid "$RAILWAY_PROJECT_ID" \
+              --arg sid "$SERVICE_ID" \
+              --arg eid "$RAILWAY_ENVIRONMENT_ID" \
+              '{query: "query { deployments(first: 5, input: { projectId: \"\($pid)\", serviceId: \"\($sid)\", environmentId: \"\($eid)\" }) { edges { node { id status createdAt } } } }"}')
+          else
+            QUERY=$(jq -n \
+              --arg pid "$RAILWAY_PROJECT_ID" \
+              --arg eid "$RAILWAY_ENVIRONMENT_ID" \
+              '{query: "query { deployments(first: 10, input: { projectId: \"\($pid)\", environmentId: \"\($eid)\" }) { edges { node { id status createdAt } } } }"}')
+          fi
+
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$QUERY" \
+            "$RAILWAY_API_URL" || echo '{}')
+
+          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r \
+            '.data.deployments.edges[]
+             | select(.node.status == "FAILED" or .node.status == "CRASHED")
+             | .node.id' | head -1)
+
+          CREATED_AT=$(echo "$RESPONSE" | jq -r \
+            '.data.deployments.edges[]
+             | select(.node.status == "FAILED" or .node.status == "CRASHED")
+             | .node.createdAt' | head -1)
+
+          echo "deployment_id=${DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
+          echo "created_at=${CREATED_AT}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch build logs
+        id: build-logs
+        if: steps.deployment.outputs.deployment_id != ''
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          DEPLOYMENT_ID="${{ steps.deployment.outputs.deployment_id }}"
+
+          QUERY=$(jq -n \
+            --arg did "$DEPLOYMENT_ID" \
+            '{query: "query { buildLogs(deploymentId: \"\($did)\", limit: 100) { timestamp message severity } }"}')
+
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$QUERY" \
+            "$RAILWAY_API_URL" || echo '{}')
+
+          LOGS=$(echo "$RESPONSE" | jq -r \
+            '.data.buildLogs[]? | "\(.timestamp) [\(.severity)] \(.message)"' \
+            | tail -200 | head -c 20000)
+
+          {
+            echo 'logs<<LOGDELIM'
+            echo "${LOGS:-(no build logs available)}"
+            echo 'LOGDELIM'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Fetch runtime logs
+        id: runtime-logs
+        if: steps.deployment.outputs.deployment_id != ''
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          DEPLOYMENT_ID="${{ steps.deployment.outputs.deployment_id }}"
+
+          QUERY=$(jq -n \
+            --arg did "$DEPLOYMENT_ID" \
+            '{query: "query { deploymentLogs(deploymentId: \"\($did)\", limit: 100) { timestamp message severity } }"}')
+
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$QUERY" \
+            "$RAILWAY_API_URL" || echo '{}')
+
+          LOGS=$(echo "$RESPONSE" | jq -r \
+            '.data.deploymentLogs[]? | "\(.timestamp) [\(.severity)] \(.message)"' \
+            | tail -200 | head -c 20000)
+
+          {
+            echo 'logs<<LOGDELIM'
+            echo "${LOGS:-(no runtime logs available)}"
+            echo 'LOGDELIM'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check for duplicate open issue
+        id: duplicate-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SERVICE_NAME="${{ steps.service.outputs.name }}"
+          TITLE="[Railway] Deploy failed: ${SERVICE_NAME}"
+
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label "railway-deploy-failure" \
+            --search "\"${TITLE}\" in:title" \
+            --json number \
+            --jq ".[0].number // empty" 2>/dev/null || echo "")
+
+          echo "existing_issue=${EXISTING}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Issue
+        if: steps.duplicate-check.outputs.existing_issue == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SERVICE_NAME="${{ steps.service.outputs.name }}"
+          COMMIT_SHA="${{ inputs.deployment_sha }}"
+          CREATED_AT="${{ steps.deployment.outputs.created_at }}"
+          DEPLOYMENT_ID="${{ steps.deployment.outputs.deployment_id }}"
+
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "[Railway] Deploy failed: ${SERVICE_NAME}" \
+            --label "railway-deploy-failure,automated" \
+            --body "$(cat <<EOF
+          ## Railway Deploy Failure
+
+          **Service:** \`${SERVICE_NAME}\`
+          **Commit:** \`${COMMIT_SHA}\`
+          **Timestamp:** ${CREATED_AT}
+          **Deployment ID:** \`${DEPLOYMENT_ID}\`
+
+          ---
+
+          ### Build Logs
+
+          \`\`\`
+          ${{ steps.build-logs.outputs.logs }}
+          \`\`\`
+
+          ---
+
+          ### Runtime Logs
+
+          \`\`\`
+          ${{ steps.runtime-logs.outputs.logs }}
+          \`\`\`
+
+          ---
+
+          *Created automatically by railway-monitor workflow. Close this issue once resolved.*
+          EOF
+          )"
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 2 — Health Check / Runtime Crash Detection
+  # ─────────────────────────────────────────────────────────────
+  health-check:
+    name: Runtime Health Check
+    if: inputs.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Check API health
+        id: api-health
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            "${{ secrets.API_URL }}/health" 2>/dev/null || echo "000")
+
+          echo "http_status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+          if [ "$STATUS" = "200" ]; then
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::API health check FAILED (HTTP ${STATUS})"
+          fi
+
+      - name: Check frontend health
+        id: frontend-health
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            "${{ secrets.FRONTEND_URL }}" 2>/dev/null || echo "000")
+
+          echo "http_status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+          if [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ] || [ "$STATUS" = "302" ]; then
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Frontend health check FAILED (HTTP ${STATUS})"
+          fi
+
+      - name: Query Railway for crashed services
+        id: crashed
+        if: steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false'
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+        run: |
+          # Get all services
+          QUERY=$(jq -n \
+            --arg pid "$RAILWAY_PROJECT_ID" \
+            '{query: "query { project(id: \"\($pid)\") { services { edges { node { id name } } } } }"}')
+
+          SERVICES_RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$QUERY" \
+            "$RAILWAY_API_URL" || echo '{}')
+
+          SERVICES=$(echo "$SERVICES_RESPONSE" | jq -r \
+            '.data.project.services.edges[].node | "\(.id)|\(.name)"' 2>/dev/null || echo "")
+
+          CRASHED_SERVICE=""
+          CRASHED_DEPLOYMENT_ID=""
+
+          while IFS='|' read -r SVC_ID SVC_NAME; do
+            [ -z "$SVC_ID" ] && continue
+
+            DEP_QUERY=$(jq -n \
+              --arg pid "$RAILWAY_PROJECT_ID" \
+              --arg sid "$SVC_ID" \
+              --arg eid "$RAILWAY_ENVIRONMENT_ID" \
+              '{query: "query { deployments(first: 1, input: { projectId: \"\($pid)\", serviceId: \"\($sid)\", environmentId: \"\($eid)\" }) { edges { node { id status } } } }"}')
+
+            DEP_RESPONSE=$(curl -sf \
+              -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$DEP_QUERY" \
+              "$RAILWAY_API_URL" || echo '{}')
+
+            STATUS=$(echo "$DEP_RESPONSE" | jq -r '.data.deployments.edges[0].node.status // empty')
+            DEP_ID=$(echo "$DEP_RESPONSE" | jq -r '.data.deployments.edges[0].node.id // empty')
+
+            if [ "$STATUS" = "CRASHED" ] || [ "$STATUS" = "FAILED" ]; then
+              CRASHED_SERVICE="${SVC_NAME}"
+              CRASHED_DEPLOYMENT_ID="${DEP_ID}"
+              break
+            fi
+          done <<< "$SERVICES"
+
+          echo "service=${CRASHED_SERVICE}" >> "$GITHUB_OUTPUT"
+          echo "deployment_id=${CRASHED_DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch runtime logs for crashed service
+        id: crash-logs
+        if: steps.crashed.outputs.deployment_id != ''
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          DEPLOYMENT_ID="${{ steps.crashed.outputs.deployment_id }}"
+
+          QUERY=$(jq -n \
+            --arg did "$DEPLOYMENT_ID" \
+            '{query: "query { deploymentLogs(deploymentId: \"\($did)\", limit: 100) { timestamp message severity } }"}')
+
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$QUERY" \
+            "$RAILWAY_API_URL" || echo '{}')
+
+          LOGS=$(echo "$RESPONSE" | jq -r \
+            '.data.deploymentLogs[]? | "\(.timestamp) [\(.severity)] \(.message)"' \
+            | tail -200 | head -c 20000)
+
+          {
+            echo 'logs<<LOGDELIM'
+            echo "${LOGS:-(no runtime logs available)}"
+            echo 'LOGDELIM'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check for duplicate open issue
+        id: duplicate-check
+        if: steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          UNHEALTHY=""
+          if [ "${{ steps.api-health.outputs.healthy }}" = "false" ]; then
+            UNHEALTHY="api"
+          fi
+          if [ "${{ steps.frontend-health.outputs.healthy }}" = "false" ]; then
+            UNHEALTHY="${UNHEALTHY:+${UNHEALTHY}, }frontend"
+          fi
+
+          CRASHED="${{ steps.crashed.outputs.service }}"
+          DISPLAY="${CRASHED:-${UNHEALTHY}}"
+          echo "display_service=${DISPLAY}" >> "$GITHUB_OUTPUT"
+
+          TITLE="[Railway] Service unhealthy: ${DISPLAY}"
+          echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label "railway-health-failure" \
+            --search "\"${TITLE}\" in:title" \
+            --json number \
+            --jq ".[0].number // empty" 2>/dev/null || echo "")
+
+          echo "existing_issue=${EXISTING}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Issue
+        if: |
+          (steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false')
+          && steps.duplicate-check.outputs.existing_issue == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DISPLAY="${{ steps.duplicate-check.outputs.display_service }}"
+          TITLE="${{ steps.duplicate-check.outputs.title }}"
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          API_STATUS="${{ steps.api-health.outputs.http_status }}"
+          FRONTEND_STATUS="${{ steps.frontend-health.outputs.http_status }}"
+
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --label "railway-health-failure,automated" \
+            --body "$(cat <<EOF
+          ## Railway Service Health Failure
+
+          **Detected at:** ${NOW}
+          **Service(s):** \`${DISPLAY}\`
+
+          ---
+
+          ### Health Check Results
+
+          | Endpoint | Status |
+          |---|---|
+          | API \`/health\` | HTTP ${API_STATUS} |
+          | Frontend | HTTP ${FRONTEND_STATUS} |
+
+          ---
+
+          ### Runtime Logs
+
+          \`\`\`
+          ${{ steps.crash-logs.outputs.logs }}
+          \`\`\`
+
+          ---
+
+          *Created automatically by railway-monitor workflow. Close this issue once resolved.*
+          EOF
+          )"
