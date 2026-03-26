@@ -174,14 +174,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           FAILED="${{ steps.check-services.outputs.failed_services }}"
-          TITLE="[Railway] Deploy failed: ${FAILED}"
+          TITLE="[Railway] ${{ github.event.repository.name }} — Deploy failed: ${FAILED}"
           echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
 
           EXISTING=$(gh issue list \
             --repo "${{ github.repository }}" \
             --state open \
             --label "railway-deploy-failure" \
-            --search "[Railway] Deploy failed in:title" \
+            --search "[Railway] ${{ github.event.repository.name }} — Deploy failed in:title" \
             --json number \
             --jq ".[0].number // empty" 2>/dev/null || echo "")
 
@@ -382,7 +382,7 @@ jobs:
           DISPLAY="${CRASHED:-${UNHEALTHY}}"
           echo "display_service=${DISPLAY}" >> "$GITHUB_OUTPUT"
 
-          TITLE="[Railway] Service unhealthy: ${DISPLAY}"
+          TITLE="[Railway] ${{ github.event.repository.name }} — Service unhealthy: ${DISPLAY}"
           echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
 
           EXISTING=$(gh issue list \
