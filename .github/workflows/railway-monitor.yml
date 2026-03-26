@@ -39,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      contents: read
 
     steps:
       - name: Wait for Railway to build
@@ -252,6 +253,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      contents: read
 
     steps:
       - name: Check API health
