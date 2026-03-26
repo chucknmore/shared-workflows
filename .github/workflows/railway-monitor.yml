@@ -87,12 +87,17 @@ jobs:
 
             if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
               FAILED_SERVICES="${FAILED_SERVICES:+${FAILED_SERVICES}, }${SVC_NAME}"
-              FAILED_DEPLOYMENT_IDS="${FAILED_DEPLOYMENT_IDS:+${FAILED_DEPLOYMENT_IDS} }${DEP_ID}|${SVC_NAME}"
+              FAILED_DEPLOYMENT_IDS="${FAILED_DEPLOYMENT_IDS}${DEP_ID}:${SVC_NAME}
+"
             fi
           done <<< "$SERVICES"
 
           echo "failed_services=${FAILED_SERVICES}" >> "$GITHUB_OUTPUT"
-          echo "failed_deployment_ids=${FAILED_DEPLOYMENT_IDS}" >> "$GITHUB_OUTPUT"
+          {
+            echo 'failed_deployment_ids<<IDSDELIM'
+            echo "${FAILED_DEPLOYMENT_IDS}"
+            echo 'IDSDELIM'
+          } >> "$GITHUB_OUTPUT"
 
           if [ -n "$FAILED_SERVICES" ]; then
             echo "::error::Failed services: ${FAILED_SERVICES}"
@@ -110,9 +115,8 @@ jobs:
         run: |
           ALL_LOGS=""
 
-          for ENTRY in ${{ steps.check-services.outputs.failed_deployment_ids }}; do
-            DEP_ID=$(echo "$ENTRY" | cut -d'|' -f1)
-            SVC_NAME=$(echo "$ENTRY" | cut -d'|' -f2)
+          while IFS=':' read -r DEP_ID SVC_NAME; do
+            [ -z "$DEP_ID" ] && continue
 
             # Fetch build logs
             BUILD_QUERY=$(jq -n \
@@ -159,7 +163,7 @@ jobs:
 
           ---
           "
-          done
+          done <<< "${{ steps.check-services.outputs.failed_deployment_ids }}"
 
           {
             echo 'all_logs<<LOGDELIM'
