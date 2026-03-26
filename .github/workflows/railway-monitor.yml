@@ -112,6 +112,7 @@ jobs:
         if: steps.check-services.outputs.has_failures == 'true'
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          FAILED_IDS: ${{ steps.check-services.outputs.failed_deployment_ids }}
         run: |
           ALL_LOGS=""
 
@@ -163,7 +164,7 @@ jobs:
 
           ---
           "
-          done <<< "${{ steps.check-services.outputs.failed_deployment_ids }}"
+          done <<< "$FAILED_IDS"
 
           {
             echo 'all_logs<<LOGDELIM'
