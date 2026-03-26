@@ -7,6 +7,11 @@ on:
         description: "The triggering event name (push or schedule)"
         required: true
         type: string
+      deploy_wait_seconds:
+        description: "Seconds to wait for Railway to finish building before checking"
+        required: false
+        type: number
+        default: 300
     secrets:
       RAILWAY_API_TOKEN:
         required: true
@@ -38,8 +43,9 @@ jobs:
     steps:
       - name: Wait for Railway to build
         run: |
-          echo "Waiting 5 minutes for Railway deploys to complete..."
-          sleep 300
+          WAIT=${{ inputs.deploy_wait_seconds }}
+          echo "Waiting ${WAIT}s for Railway deploys to complete..."
+          sleep "$WAIT"
 
       - name: Check all services for failures
         id: check-services
