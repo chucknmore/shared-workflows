@@ -45,7 +45,6 @@ jobs:
     permissions:
       issues: write
       contents: read
-      metadata: read
 
     steps:
       - name: Wait for Railway to build
@@ -260,7 +259,6 @@ jobs:
     permissions:
       issues: write
       contents: read
-      metadata: read
 
     steps:
       - name: Check if health check should run
