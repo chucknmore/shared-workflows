@@ -1,0 +1,46 @@
+# Example: How to call the railway-monitor reusable workflow from your project.
+#
+# Copy this file to your project's .github/workflows/ directory and customize
+# the health_check_urls input with your service names and URLs.
+#
+# Each project defines its own set of services — no changes to the shared
+# workflow are needed when services are added or removed.
+
+name: Railway Monitor
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
+
+jobs:
+  monitor:
+    uses: your-org/shared-workflows/.github/workflows/railway-monitor.yml@main
+    with:
+      event_name: ${{ github.event_name }}
+
+      # JSON object mapping service names to their health-check URLs.
+      # Include only services that have HTTP endpoints you want to monitor.
+      # The full URL is used as-is — append /health if your service expects it.
+      #
+      # Examples for different project types:
+      #
+      # API + Frontend:
+      #   health_check_urls: '{"api":"${{ secrets.API_URL }}/health","frontend":"${{ secrets.FRONTEND_URL }}"}'
+      #
+      # API + Web + Worker (worker has no HTTP endpoint, so omit it):
+      #   health_check_urls: '{"api":"${{ secrets.API_URL }}/health","web":"${{ secrets.WEB_URL }}"}'
+      #
+      # Single service:
+      #   health_check_urls: '{"reporting":"${{ secrets.REPORTING_URL }}/health"}'
+      #
+      # No HTTP services (deploy-check still monitors Railway deployment status):
+      #   health_check_urls: '{}'
+      #
+      health_check_urls: '{"api":"${{ secrets.API_URL }}/health","frontend":"${{ secrets.FRONTEND_URL }}"}'
+
+    secrets:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}

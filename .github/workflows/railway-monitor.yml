@@ -17,6 +17,14 @@ on:
         required: false
         type: number
         default: 15
+      health_check_urls:
+        description: >
+          JSON object mapping service names to health-check URLs.
+          Example: '{"api":"https://api.example.com/health","frontend":"https://app.example.com"}'
+          Omit or pass '{}' to skip HTTP health checks.
+        required: false
+        type: string
+        default: '{}'
     secrets:
       RAILWAY_API_TOKEN:
         required: true
@@ -24,10 +32,6 @@ on:
         required: true
       RAILWAY_ENVIRONMENT_ID:
         required: true
-      API_URL:
-        required: false
-      FRONTEND_URL:
-        required: false
 
 env:
   RAILWAY_API_URL: https://backboard.railway.com/graphql/v2
@@ -274,43 +278,56 @@ jobs:
             echo "Skipping health check (next run at minute divisible by ${INTERVAL})"
           fi
 
-      - name: Check API health
-        id: api-health
+      - name: Check service health
+        id: health-check-urls
         if: steps.gate.outputs.should_run == 'true'
+        env:
+          HEALTH_CHECK_URLS: ${{ inputs.health_check_urls }}
         run: |
-          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
-            --max-time 15 \
-            "${{ secrets.API_URL }}/health" 2>/dev/null || echo "000")
+          URLS_JSON="${HEALTH_CHECK_URLS:-\{\}}"
 
-          echo "http_status=${STATUS}" >> "$GITHUB_OUTPUT"
-
-          if [ "$STATUS" = "200" ]; then
-            echo "healthy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "healthy=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::API health check FAILED (HTTP ${STATUS})"
+          if ! echo "$URLS_JSON" | jq -e 'type == "object"' > /dev/null 2>&1; then
+            echo "::error::health_check_urls is not a valid JSON object: ${URLS_JSON}"
+            exit 1
           fi
 
-      - name: Check frontend health
-        id: frontend-health
-        if: steps.gate.outputs.should_run == 'true'
-        run: |
-          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
-            --max-time 15 \
-            "${{ secrets.FRONTEND_URL }}" 2>/dev/null || echo "000")
+          SERVICE_COUNT=$(echo "$URLS_JSON" | jq 'length')
+          echo "Checking ${SERVICE_COUNT} service(s)..."
 
-          echo "http_status=${STATUS}" >> "$GITHUB_OUTPUT"
+          ANY_UNHEALTHY=false
+          RESULTS=""
 
-          if [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ] || [ "$STATUS" = "302" ]; then
-            echo "healthy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "healthy=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Frontend health check FAILED (HTTP ${STATUS})"
-          fi
+          while IFS= read -r SVC_NAME; do
+            URL=$(echo "$URLS_JSON" | jq -r --arg k "$SVC_NAME" '.[$k]')
+
+            HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+              --max-time 15 \
+              "$URL" 2>/dev/null || echo "000")
+
+            if [ "$HTTP_STATUS" = "200" ] || \
+               [ "$HTTP_STATUS" = "301" ] || \
+               [ "$HTTP_STATUS" = "302" ]; then
+              IS_HEALTHY=true
+              echo "  ${SVC_NAME}: HTTP ${HTTP_STATUS} (healthy)"
+            else
+              IS_HEALTHY=false
+              ANY_UNHEALTHY=true
+              echo "::warning::${SVC_NAME} health check FAILED (HTTP ${HTTP_STATUS})"
+            fi
+
+            RESULTS="${RESULTS}${SVC_NAME}|${HTTP_STATUS}|${IS_HEALTHY}"$'\n'
+          done < <(echo "$URLS_JSON" | jq -r 'keys[]')
+
+          echo "any_unhealthy=${ANY_UNHEALTHY}" >> "$GITHUB_OUTPUT"
+          {
+            echo 'results<<HEALTHDELIM'
+            printf '%s' "$RESULTS"
+            echo 'HEALTHDELIM'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Query Railway for crashed services
         id: crashed
-        if: steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false'
+        if: steps.health-check-urls.outputs.any_unhealthy == 'true'
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
@@ -390,17 +407,18 @@ jobs:
 
       - name: Check for duplicate open issue
         id: duplicate-check
-        if: steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false'
+        if: steps.health-check-urls.outputs.any_unhealthy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          HEALTH_RESULTS: ${{ steps.health-check-urls.outputs.results }}
         run: |
           UNHEALTHY=""
-          if [ "${{ steps.api-health.outputs.healthy }}" = "false" ]; then
-            UNHEALTHY="api"
-          fi
-          if [ "${{ steps.frontend-health.outputs.healthy }}" = "false" ]; then
-            UNHEALTHY="${UNHEALTHY:+${UNHEALTHY}, }frontend"
-          fi
+          while IFS='|' read -r SVC_NAME _HTTP_STATUS IS_HEALTHY; do
+            [ -z "$SVC_NAME" ] && continue
+            if [ "$IS_HEALTHY" = "false" ]; then
+              UNHEALTHY="${UNHEALTHY:+${UNHEALTHY}, }${SVC_NAME}"
+            fi
+          done <<< "$HEALTH_RESULTS"
 
           CRASHED="${{ steps.crashed.outputs.service }}"
           DISPLAY="${CRASHED:-${UNHEALTHY}}"
@@ -420,15 +438,25 @@ jobs:
           echo "existing_issue=${EXISTING}" >> "$GITHUB_OUTPUT"
 
       - name: Write health issue body to file
-        if: |
-          (steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false')
+        if: steps.health-check-urls.outputs.any_unhealthy == 'true'
         env:
           DISPLAY: ${{ steps.duplicate-check.outputs.display_service }}
-          API_STATUS: ${{ steps.api-health.outputs.http_status }}
-          FRONTEND_STATUS: ${{ steps.frontend-health.outputs.http_status }}
+          HEALTH_RESULTS: ${{ steps.health-check-urls.outputs.results }}
           LOGS: ${{ steps.crash-logs.outputs.logs }}
         run: |
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          TABLE_ROWS=""
+          while IFS='|' read -r SVC_NAME HTTP_STATUS IS_HEALTHY; do
+            [ -z "$SVC_NAME" ] && continue
+            if [ "$IS_HEALTHY" = "true" ]; then
+              ICON=":white_check_mark:"
+            else
+              ICON=":x:"
+            fi
+            TABLE_ROWS="${TABLE_ROWS}| ${SVC_NAME} | HTTP ${HTTP_STATUS} | ${ICON} |"$'\n'
+          done <<< "$HEALTH_RESULTS"
+
           cat > /tmp/health-issue-body.md <<ENDOFBODY
           ## Railway Service Health Failure
 
@@ -439,11 +467,9 @@ jobs:
 
           ### Health Check Results
 
-          | Endpoint | Status |
-          |---|---|
-          | API \`/health\` | HTTP ${API_STATUS} |
-          | Frontend | HTTP ${FRONTEND_STATUS} |
-
+          | Service | HTTP Status | Healthy |
+          |---|---|---|
+          ${TABLE_ROWS}
           ---
 
           ### Runtime Logs
@@ -458,8 +484,8 @@ jobs:
           ENDOFBODY
 
       - name: Create GitHub Issue
-        if: |
-          (steps.api-health.outputs.healthy == 'false' || steps.frontend-health.outputs.healthy == 'false')
+        if: >-
+          steps.health-check-urls.outputs.any_unhealthy == 'true'
           && steps.duplicate-check.outputs.existing_issue == ''
         env:
           GH_TOKEN: ${{ github.token }}
