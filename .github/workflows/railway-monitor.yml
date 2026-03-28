@@ -32,7 +32,7 @@ on:
         required: true
       RAILWAY_ENVIRONMENT_ID:
         required: true
-      CLAUDE_CODE_OAUTH_TOKEN:
+      ISSUES_PAT:
         required: true
 
 env:
@@ -249,13 +249,13 @@ jobs:
       - name: Create GitHub Issue
         if: steps.check-services.outputs.has_failures == 'true' && steps.duplicate-check.outputs.existing_issue == ''
         env:
-          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ISSUES_TOKEN: ${{ secrets.ISSUES_PAT }}
           TITLE: ${{ steps.duplicate-check.outputs.title }}
           REPO: ${{ github.repository }}
         run: |
           BODY=$(cat /tmp/issue-body.md | jq -Rs .)
           curl -sf -X POST \
-            -H "Authorization: token ${CLAUDE_TOKEN}" \
+            -H "Authorization: token ${ISSUES_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/issues" \
             -d "{\"title\":$(echo "$TITLE" | jq -Rs .),\"body\":${BODY},\"labels\":[\"railway-deploy-failure\",\"automated\",\"claude\"]}"
@@ -505,13 +505,13 @@ jobs:
           steps.health-check-urls.outputs.any_unhealthy == 'true'
           && steps.duplicate-check.outputs.existing_issue == ''
         env:
-          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ISSUES_TOKEN: ${{ secrets.ISSUES_PAT }}
           TITLE: ${{ steps.duplicate-check.outputs.title }}
           REPO: ${{ github.repository }}
         run: |
           BODY=$(cat /tmp/health-issue-body.md | jq -Rs .)
           curl -sf -X POST \
-            -H "Authorization: token ${CLAUDE_TOKEN}" \
+            -H "Authorization: token ${ISSUES_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/issues" \
             -d "{\"title\":$(echo "$TITLE" | jq -Rs .),\"body\":${BODY},\"labels\":[\"railway-health-failure\",\"automated\",\"claude\"]}"
