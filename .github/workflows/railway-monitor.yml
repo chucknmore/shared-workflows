@@ -240,7 +240,8 @@ jobs:
           gh issue create \
             --repo "${{ github.repository }}" \
             --title "$TITLE" \
-            --label "railway-deploy-failure,automated" \
+            --label "railway-deploy-failure,automated,claude" \
+            --assignee claude \
             --body-file /tmp/issue-body.md
 
       - name: Comment on existing issue
@@ -494,5 +495,6 @@ jobs:
           gh issue create \
             --repo "${{ github.repository }}" \
             --title "$TITLE" \
-            --label "railway-health-failure,automated" \
+            --label "railway-health-failure,automated,claude" \
+            --assignee claude \
             --body-file /tmp/health-issue-body.md

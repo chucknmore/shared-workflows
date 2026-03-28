@@ -1,0 +1,26 @@
+# Example: How to call the claude-autofix reusable workflow from your project.
+#
+# Copy this file to your project's .github/workflows/ directory.
+#
+# Prerequisites:
+#   1. Install the Claude GitHub App: https://github.com/apps/claude
+#   2. Add CLAUDE_CODE_OAUTH_TOKEN as a repository or organization secret
+#
+# How it works:
+#   - When the Railway Monitor creates an issue labeled "claude", this workflow triggers
+#   - Claude analyzes the error logs in the issue body
+#   - Claude creates a PR with a fix targeting main
+#   - A human reviews and merges the PR
+#   - Merging triggers a new Railway deploy
+
+name: Claude Autofix
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  autofix:
+    uses: your-org/shared-workflows/.github/workflows/claude-autofix.yml@main
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

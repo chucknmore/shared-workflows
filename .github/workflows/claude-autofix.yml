@@ -1,0 +1,63 @@
+name: Claude Autofix (Reusable)
+
+on:
+  workflow_call:
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  autofix:
+    name: Claude Autofix
+    # Only run on new issues with the "claude" label, skip if already attempted
+    if: >-
+      github.event_name == 'issues'
+      && github.event.action == 'opened'
+      && contains(github.event.issue.labels.*.name, 'claude')
+      && !contains(github.event.issue.labels.*.name, 'claude-attempted')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Add claude-attempted label (loop guard)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --add-label "claude-attempted"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          branch_prefix: "claude/fix-"
+          prompt: |
+            A Railway deployment or health check failure was detected.
+            An automated GitHub issue was created with the error details below.
+
+            Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+
+            --- Issue Body ---
+            ${{ github.event.issue.body }}
+            --- End Issue Body ---
+
+            Instructions:
+            1. Analyze the error logs and service failure details in the issue body
+            2. Identify the root cause in the codebase
+            3. Implement a fix following existing code patterns and conventions
+            4. Ensure the fix is minimal and targeted — do not refactor unrelated code
+            5. Run any available tests to verify the fix does not break existing functionality
+            6. Open a pull request referencing issue #${{ github.event.issue.number }}
+
+            If you cannot determine the root cause from the logs, comment on the issue
+            explaining what you found and what additional information is needed.
+          claude_args: "--max-turns 15"
