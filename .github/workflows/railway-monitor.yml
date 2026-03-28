@@ -25,9 +25,9 @@ on:
       RAILWAY_ENVIRONMENT_ID:
         required: true
       API_URL:
-        required: true
+        required: false
       FRONTEND_URL:
-        required: true
+        required: false
 
 env:
   RAILWAY_API_URL: https://backboard.railway.com/graphql/v2
