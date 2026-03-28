@@ -32,6 +32,8 @@ on:
         required: true
       RAILWAY_ENVIRONMENT_ID:
         required: true
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
 
 env:
   RAILWAY_API_URL: https://backboard.railway.com/graphql/v2
@@ -204,7 +206,7 @@ jobs:
         id: duplicate-check
         if: steps.check-services.outputs.has_failures == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           FAILED="${{ steps.check-services.outputs.failed_services }}"
           TITLE="[Railway] ${{ github.event.repository.name }} — Deploy failed: ${FAILED}"
@@ -247,7 +249,7 @@ jobs:
       - name: Create GitHub Issue
         if: steps.check-services.outputs.has_failures == 'true' && steps.duplicate-check.outputs.existing_issue == ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TITLE: ${{ steps.duplicate-check.outputs.title }}
         run: |
           gh issue create \
@@ -259,7 +261,7 @@ jobs:
       - name: Comment on existing issue
         if: steps.check-services.outputs.has_failures == 'true' && steps.duplicate-check.outputs.existing_issue != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ISSUE_NUM: ${{ steps.duplicate-check.outputs.existing_issue }}
         run: |
           gh issue comment "$ISSUE_NUM" \
@@ -422,7 +424,7 @@ jobs:
         id: duplicate-check
         if: steps.health-check-urls.outputs.any_unhealthy == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           HEALTH_RESULTS: ${{ steps.health-check-urls.outputs.results }}
         run: |
           UNHEALTHY=""
@@ -501,7 +503,7 @@ jobs:
           steps.health-check-urls.outputs.any_unhealthy == 'true'
           && steps.duplicate-check.outputs.existing_issue == ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TITLE: ${{ steps.duplicate-check.outputs.title }}
         run: |
           gh issue create \
