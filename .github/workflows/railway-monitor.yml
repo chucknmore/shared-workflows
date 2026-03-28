@@ -158,6 +158,21 @@ jobs:
               '.data.buildLogs[]? | "\(.timestamp) [\(.severity)] \(.message)"' \
               | tail -100 | head -c 10000)
 
+            # If no build logs, fetch deployment metadata for config/build errors
+            if [ -z "$BUILD_LOGS" ]; then
+              META_QUERY=$(jq -n \
+                --arg did "$DEP_ID" \
+                '{query: "query { deployment(id: \"\($did)\") { status meta staticUrl } }"}')
+
+              META_RESPONSE=$(curl -s \
+                -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "$META_QUERY" \
+                "$RAILWAY_API_URL" || echo '{}')
+
+              BUILD_LOGS=$(echo "$META_RESPONSE" | jq -r '.data.deployment // empty | tostring' 2>/dev/null | head -c 10000)
+            fi
+
             # Fetch runtime logs
             RUNTIME_QUERY=$(jq -n \
               --arg did "$DEP_ID" \
