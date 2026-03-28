@@ -103,7 +103,7 @@ jobs:
 
             if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
               FAILED_SERVICES="${FAILED_SERVICES:+${FAILED_SERVICES}, }${SVC_NAME}"
-              FAILED_DEPLOYMENT_IDS=$(printf '%s%s:%s\n' "$FAILED_DEPLOYMENT_IDS" "$DEP_ID" "$SVC_NAME")
+              FAILED_DEPLOYMENT_IDS=$(printf '%s\n%s' "$FAILED_DEPLOYMENT_IDS" "${DEP_ID}:${SVC_NAME}")
             fi
           done <<< "$SERVICES"
 
@@ -133,17 +133,24 @@ jobs:
 
           while IFS=':' read -r DEP_ID SVC_NAME; do
             [ -z "$DEP_ID" ] && continue
+            echo "Fetching logs for ${SVC_NAME} (deployment: ${DEP_ID})"
 
             # Fetch build logs
             BUILD_QUERY=$(jq -n \
               --arg did "$DEP_ID" \
               '{query: "query { buildLogs(deploymentId: \"\($did)\", limit: 80) { timestamp message severity } }"}')
 
-            BUILD_RESPONSE=$(curl -sf \
+            BUILD_RESPONSE=$(curl -s \
               -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$BUILD_QUERY" \
               "$RAILWAY_API_URL" || echo '{}')
+
+            # Debug: check for API errors
+            BUILD_ERRORS=$(echo "$BUILD_RESPONSE" | jq -r '.errors[]?.message // empty' 2>/dev/null)
+            if [ -n "$BUILD_ERRORS" ]; then
+              echo "::warning::Build logs API error for ${SVC_NAME}: ${BUILD_ERRORS}"
+            fi
 
             BUILD_LOGS=$(echo "$BUILD_RESPONSE" | jq -r \
               '.data.buildLogs[]? | "\(.timestamp) [\(.severity)] \(.message)"' \
@@ -154,11 +161,17 @@ jobs:
               --arg did "$DEP_ID" \
               '{query: "query { deploymentLogs(deploymentId: \"\($did)\", limit: 80) { timestamp message severity } }"}')
 
-            RUNTIME_RESPONSE=$(curl -sf \
+            RUNTIME_RESPONSE=$(curl -s \
               -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$RUNTIME_QUERY" \
               "$RAILWAY_API_URL" || echo '{}')
+
+            # Debug: check for API errors
+            RUNTIME_ERRORS=$(echo "$RUNTIME_RESPONSE" | jq -r '.errors[]?.message // empty' 2>/dev/null)
+            if [ -n "$RUNTIME_ERRORS" ]; then
+              echo "::warning::Runtime logs API error for ${SVC_NAME}: ${RUNTIME_ERRORS}"
+            fi
 
             RUNTIME_LOGS=$(echo "$RUNTIME_RESPONSE" | jq -r \
               '.data.deploymentLogs[]? | "\(.timestamp) [\(.severity)] \(.message)"' \
