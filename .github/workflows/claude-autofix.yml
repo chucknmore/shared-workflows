@@ -40,6 +40,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           base_branch: main
           branch_prefix: "claude/fix-"
+          allowed_tools: "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
           prompt: |
             A Railway deployment or health check failure was detected.
             An automated GitHub issue was created with the error details below.
@@ -52,12 +53,21 @@ jobs:
 
             Instructions:
             1. Analyze the error logs and service failure details in the issue body
-            2. Identify the root cause in the codebase
-            3. Implement a fix following existing code patterns and conventions
-            4. Ensure the fix is minimal and targeted — do not refactor unrelated code
-            5. Run any available tests to verify the fix does not break existing functionality
-            6. Open a pull request referencing issue #${{ github.event.issue.number }}
+            2. Determine whether this is a CODE issue (bug, missing dependency, bad config file in the repo) or an INFRASTRUCTURE issue (Railway dashboard settings, environment variables, service config, builder settings, DNS, etc.)
 
-            If you cannot determine the root cause from the logs, comment on the issue
-            explaining what you found and what additional information is needed.
+            If this is a CODE issue:
+            3. Identify the root cause in the codebase
+            4. Implement a fix following existing code patterns and conventions
+            5. Ensure the fix is minimal and targeted — do not refactor unrelated code
+            6. Run any available tests to verify the fix does not break existing functionality
+            7. Open a pull request referencing issue #${{ github.event.issue.number }}
+
+            If this is an INFRASTRUCTURE issue (not fixable via code):
+            3. Use the gh CLI to comment on issue #${{ github.event.issue.number }} with:
+               - A clear explanation of the root cause
+               - Step-by-step instructions to resolve it (e.g. Railway dashboard changes, environment variable updates, service configuration fixes)
+               - The specific setting or value that needs to change
+               Example: gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} --body "..."
+
+            Always take action — either open a PR or comment with guidance. Never exit silently.
           claude_args: "--max-turns 15"
