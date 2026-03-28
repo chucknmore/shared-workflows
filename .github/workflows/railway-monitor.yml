@@ -206,7 +206,7 @@ jobs:
         id: duplicate-check
         if: steps.check-services.outputs.has_failures == 'true'
         env:
-          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           FAILED="${{ steps.check-services.outputs.failed_services }}"
           TITLE="[Railway] ${{ github.event.repository.name }} — Deploy failed: ${FAILED}"
@@ -249,19 +249,21 @@ jobs:
       - name: Create GitHub Issue
         if: steps.check-services.outputs.has_failures == 'true' && steps.duplicate-check.outputs.existing_issue == ''
         env:
-          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TITLE: ${{ steps.duplicate-check.outputs.title }}
+          REPO: ${{ github.repository }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --title "$TITLE" \
-            --label "railway-deploy-failure,automated,claude" \
-            --body-file /tmp/issue-body.md
+          BODY=$(cat /tmp/issue-body.md | jq -Rs .)
+          curl -sf -X POST \
+            -H "Authorization: token ${CLAUDE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/issues" \
+            -d "{\"title\":$(echo "$TITLE" | jq -Rs .),\"body\":${BODY},\"labels\":[\"railway-deploy-failure\",\"automated\",\"claude\"]}"
 
       - name: Comment on existing issue
         if: steps.check-services.outputs.has_failures == 'true' && steps.duplicate-check.outputs.existing_issue != ''
         env:
-          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           ISSUE_NUM: ${{ steps.duplicate-check.outputs.existing_issue }}
         run: |
           gh issue comment "$ISSUE_NUM" \
@@ -424,7 +426,7 @@ jobs:
         id: duplicate-check
         if: steps.health-check-urls.outputs.any_unhealthy == 'true'
         env:
-          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           HEALTH_RESULTS: ${{ steps.health-check-urls.outputs.results }}
         run: |
           UNHEALTHY=""
@@ -503,11 +505,13 @@ jobs:
           steps.health-check-urls.outputs.any_unhealthy == 'true'
           && steps.duplicate-check.outputs.existing_issue == ''
         env:
-          GH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TITLE: ${{ steps.duplicate-check.outputs.title }}
+          REPO: ${{ github.repository }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --title "$TITLE" \
-            --label "railway-health-failure,automated,claude" \
-            --body-file /tmp/health-issue-body.md
+          BODY=$(cat /tmp/health-issue-body.md | jq -Rs .)
+          curl -sf -X POST \
+            -H "Authorization: token ${CLAUDE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/issues" \
+            -d "{\"title\":$(echo "$TITLE" | jq -Rs .),\"body\":${BODY},\"labels\":[\"railway-health-failure\",\"automated\",\"claude\"]}"
