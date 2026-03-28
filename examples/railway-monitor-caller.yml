@@ -16,7 +16,10 @@ on:
 
 jobs:
   monitor:
-    uses: your-org/shared-workflows/.github/workflows/railway-monitor.yml@main
+    uses: chucknmore/shared-workflows/.github/workflows/railway-monitor.yml@main
+    permissions:
+      issues: write
+      contents: read
     with:
       event_name: ${{ github.event_name }}
 
