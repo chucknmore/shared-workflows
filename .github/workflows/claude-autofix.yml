@@ -40,6 +40,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           base_branch: main
           branch_prefix: "claude/fix-"
+          additional_permissions: "gh issue comment,gh issue edit,gh issue view,gh pr create"
           prompt: |
             A Railway deployment or health check failure was detected.
             An automated GitHub issue was created with the error details below.
@@ -69,4 +70,4 @@ jobs:
                Example: gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} --body "..."
 
             Always take action — either open a PR or comment with guidance. Never exit silently.
-          claude_args: "--max-turns 15"
+          claude_args: "--max-turns 25"
