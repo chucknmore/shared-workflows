@@ -69,4 +69,17 @@ jobs:
                Example: gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} --body "..."
 
             Always take action — either open a PR or comment with guidance. Never exit silently.
-          claude_args: '--allowedTools "Bash(gh issue *),Bash(gh pr *),Bash(git *),Bash(npm *),Bash(pnpm *),Bash(npx *)" --max-turns 25'
+          settings: |
+            {
+              "permissions": {
+                "allow": [
+                  "Bash(gh issue *)",
+                  "Bash(gh pr *)",
+                  "Bash(git *)",
+                  "Bash(npm *)",
+                  "Bash(pnpm *)",
+                  "Bash(npx *)"
+                ]
+              }
+            }
+          claude_args: "--max-turns 25"
