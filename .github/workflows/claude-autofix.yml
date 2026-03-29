@@ -78,7 +78,14 @@ jobs:
                   "Bash(git *)",
                   "Bash(npm *)",
                   "Bash(pnpm *)",
-                  "Bash(npx *)"
+                  "Bash(npx *)",
+                  "Bash(cat *)",
+                  "Bash(ls *)",
+                  "Edit",
+                  "Write",
+                  "Read",
+                  "Glob",
+                  "Grep"
                 ]
               }
             }
